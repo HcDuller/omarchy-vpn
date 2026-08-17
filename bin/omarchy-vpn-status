@@ -1,0 +1,33 @@
+#!/bin/bash
+# Lists OpenVPN connection profiles known to NetworkManager, one per line:
+#   uuid<TAB>name<TAB>state<TAB>autoconnect
+#
+# state is one of: connected | connecting | idle
+# (an in-flight connect/disconnect/error is tracked by the panel itself,
+#  not here -- this script only reports NetworkManager's own view.)
+set -uo pipefail
+
+uuids=$(nmcli -g UUID connection show 2>/dev/null)
+[ -z "$uuids" ] && exit 0
+
+while IFS= read -r uuid; do
+  [ -z "$uuid" ] && continue
+
+  type=$(nmcli -g connection.type connection show "$uuid" 2>/dev/null)
+  [ "$type" = "vpn" ] || continue
+
+  service=$(nmcli -g vpn.service-type connection show "$uuid" 2>/dev/null)
+  [ "$service" = "org.freedesktop.NetworkManager.openvpn" ] || continue
+
+  name=$(nmcli -g connection.id connection show "$uuid" 2>/dev/null)
+  autoconnect=$(nmcli -g connection.autoconnect connection show "$uuid" 2>/dev/null)
+  state=$(nmcli -g GENERAL.STATE connection show "$uuid" 2>/dev/null)
+
+  case "$state" in
+    activated) st=connected ;;
+    activating) st=connecting ;;
+    *) st=idle ;;
+  esac
+
+  printf '%s\t%s\t%s\t%s\n' "$uuid" "$name" "$st" "$autoconnect"
+done <<< "$uuids"

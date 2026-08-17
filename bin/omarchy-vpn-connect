@@ -1,0 +1,8 @@
+#!/bin/bash
+# Activates an OpenVPN connection profile by UUID. Meant to be run through a
+# foreground Process (not execDetached) so the caller can read the exit code
+# and stderr to distinguish success from a real failure.
+set -uo pipefail
+
+uuid="${1:?usage: omarchy-vpn-connect <uuid>}"
+exec nmcli connection up "$uuid"

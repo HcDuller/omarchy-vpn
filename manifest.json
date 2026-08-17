@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.hcduller.vpn",
+  "name": "VPN",
+  "version": "0.1.0",
+  "author": "HcDuller",
+  "license": "MIT",
+  "description": "Manage OpenVPN connections: connect/disconnect, create, edit and import .ovpn profiles.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "VPN",
+    "description": "Connect, create, edit and import OpenVPN profiles from the bar.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaults": {
+      "refreshIntervalSec": 5
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 2,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 5
+      }
+    ]
+  }
+}

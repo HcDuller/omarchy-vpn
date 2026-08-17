@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Creates or updates an OpenVPN NetworkManager connection profile.
+
+Reads a single JSON object from stdin:
+  {
+    "uuid": "" | "<existing-uuid>",
+    "name": "<connection name>",
+    "autoconnect": true|false,
+    "data": {"<vpn.data key>": "<already nmcli-escaped value>", ...},
+    "password": "" | "<new password, blank = leave unchanged>"
+  }
+
+Prints the connection's UUID to stdout on success. All secret material
+(the password) is piped to `nmcli connection edit` over stdin, mirroring
+the shell's existing enterprise-Wi-Fi helper, so it never appears as a
+process argument (world-readable via /proc/<pid>/cmdline).
+"""
+import json
+import re
+import sys
+import subprocess
+
+
+def run(cmd, input_text=None):
+    return subprocess.run(
+        cmd, input=input_text, text=True, check=True, capture_output=True
+    )
+
+
+def main():
+    # A single readline(), not json.load(sys.stdin) -- the caller (a
+    # Quickshell Process) writes one line and keeps stdin open rather than
+    # closing it, so reading until EOF here would hang forever waiting for
+    # a stream end that never comes. JSON.stringify's output has no
+    # embedded newlines, so one line is exactly one payload.
+    line = sys.stdin.readline()
+    payload = json.loads(line)
+    uuid = (payload.get("uuid") or "").strip()
+    name = (payload.get("name") or "").strip()
+    data = payload.get("data") or {}
+    password = payload.get("password") or ""
+    autoconnect = "yes" if payload.get("autoconnect") else "no"
+
+    if not name:
+        raise ValueError("name is required")
+
+    data_str = ", ".join("%s = %s" % (k, v) for k, v in data.items())
+
+    if uuid:
+        run([
+            "nmcli", "connection", "modify", uuid,
+            "connection.id", name,
+            "connection.autoconnect", autoconnect,
+            "vpn.data", data_str,
+        ])
+    else:
+        result = run([
+            "nmcli", "connection", "add",
+            "type", "vpn", "vpn-type", "openvpn",
+            "con-name", name,
+            "connection.autoconnect", autoconnect,
+            "--", "vpn.data", data_str,
+        ])
+        match = re.search(r"\(([0-9a-fA-F-]{36})\)", result.stdout)
+        if not match:
+            raise RuntimeError("could not parse new connection UUID from: %s" % result.stdout)
+        uuid = match.group(1)
+
+    if password:
+        # vpn.secrets is itself a map property (like vpn.data), so the key
+        # goes on the `set` line as key=value, not as a dotted sub-property.
+        script = "set vpn.secrets password=%s\nsave\nquit\n" % password
+        run(["nmcli", "connection", "edit", "uuid", uuid], input_text=script)
+
+    print(uuid)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(exc.stderr or exc.stdout or str(exc))
+        sys.exit(1)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(str(exc))
+        sys.exit(1)

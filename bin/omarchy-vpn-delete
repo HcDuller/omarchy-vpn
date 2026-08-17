@@ -1,0 +1,5 @@
+#!/bin/bash
+set -uo pipefail
+
+uuid="${1:?usage: omarchy-vpn-delete <uuid>}"
+exec nmcli connection delete "$uuid"

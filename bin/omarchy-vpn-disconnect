@@ -1,0 +1,5 @@
+#!/bin/bash
+set -uo pipefail
+
+uuid="${1:?usage: omarchy-vpn-disconnect <uuid>}"
+exec nmcli connection down "$uuid"

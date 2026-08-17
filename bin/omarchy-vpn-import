@@ -1,0 +1,37 @@
+#!/bin/bash
+# Opens the native file picker, then imports the chosen .ovpn as a new
+# NetworkManager OpenVPN connection profile. On success prints:
+#   uuid<TAB>name
+# On cancel/error, prints nothing and exits non-zero (error text on stderr).
+set -uo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+path=$("$DIR/omarchy-vpn-pick-file")
+rc=$?
+if [ $rc -ne 0 ] || [ -z "$path" ]; then
+  exit 1
+fi
+
+if [ ! -f "$path" ]; then
+  echo "File not found: $path" >&2
+  exit 1
+fi
+
+out=$(nmcli connection import type openvpn file "$path" 2>&1)
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "$out" >&2
+  exit 1
+fi
+
+# nmcli prints: Connection 'NAME' (UUID) successfully added.
+uuid=$(echo "$out" | grep -oE '\([0-9a-fA-F-]{36}\)' | tr -d '()')
+name=$(echo "$out" | sed -n "s/.*Connection '\(.*\)' (.*/\1/p")
+
+if [ -z "$uuid" ]; then
+  echo "$out" >&2
+  exit 1
+fi
+
+printf '%s\t%s\n' "$uuid" "$name"

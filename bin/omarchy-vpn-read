@@ -1,0 +1,21 @@
+#!/bin/bash
+# Dumps the fields of an existing OpenVPN connection profile needed to
+# prefill the edit form. Secrets (vpn.secrets) are never printed here --
+# nmcli hides them by default and the edit form leaves the password field
+# blank unless the user chooses to change it.
+#
+# Output (tab-separated, one field per line):
+#   name<TAB><connection name>
+#   data<TAB><raw vpn.data map string, "k = v, k = v, ...">
+#   autoconnect<TAB>yes|no
+set -uo pipefail
+
+uuid="${1:?usage: omarchy-vpn-read <uuid>}"
+
+name=$(nmcli -g connection.id connection show "$uuid" 2>/dev/null)
+data=$(nmcli -g vpn.data -e yes connection show "$uuid" 2>/dev/null)
+autoconnect=$(nmcli -g connection.autoconnect connection show "$uuid" 2>/dev/null)
+
+printf 'name\t%s\n' "$name"
+printf 'data\t%s\n' "$data"
+printf 'autoconnect\t%s\n' "$autoconnect"

@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Native file picker for importing a .ovpn configuration.
+
+Uses GTK's FileChooserNative (routed through xdg-desktop-portal when the
+app is sandboxed, or a plain GTK dialog otherwise) so the shell never has
+to implement its own in-QML file browser -- the same "shell out to a
+helper that owns the native picker" pattern the built-in Tailscale plugin
+uses for its send-file action.
+
+Prints the chosen path to stdout and exits 0, or exits 1 with nothing on
+stdout if the user canceled.
+"""
+import sys
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk  # noqa: E402
+
+
+def main():
+    dialog = Gtk.FileChooserNative.new(
+        "Import OpenVPN Configuration",
+        None,
+        Gtk.FileChooserAction.OPEN,
+        "_Open",
+        "_Cancel",
+    )
+
+    ovpn_filter = Gtk.FileFilter()
+    ovpn_filter.set_name("OpenVPN config (*.ovpn, *.conf)")
+    ovpn_filter.add_pattern("*.ovpn")
+    ovpn_filter.add_pattern("*.conf")
+    dialog.add_filter(ovpn_filter)
+
+    all_filter = Gtk.FileFilter()
+    all_filter.set_name("All files")
+    all_filter.add_pattern("*")
+    dialog.add_filter(all_filter)
+
+    response = dialog.run()
+    path = dialog.get_filename() if response == Gtk.ResponseType.ACCEPT else None
+    dialog.destroy()
+
+    if not path:
+        return 1
+
+    sys.stdout.write(path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
