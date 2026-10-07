@@ -22,6 +22,25 @@ Panel {
   // folder name the plugin is installed/cloned under, so renaming the
   // plugin id (or a user manually renaming the folder) can't silently break
   // every helper-script call the way a hardcoded HOME+id path would.
+  // True while flea's file picker is up. The panel's overlay window spans the
+  // whole screen above normal windows and closes the panel on any outside
+  // click, so without this a click on the picker would land on the overlay and
+  // dismiss the panel. While picking: outside clicks no longer close it, and
+  // the overlay only accepts input over the panel card itself.
+  readonly property bool picking: importProc.running || pickProc.running
+
+  // Dismissals (outside click, Escape, popout switch) are ignored while
+  // picking. Toggling from the bar icon still closes it, as an escape hatch.
+  function close() {
+    if (root.picking) return
+    root.controller.hide()
+  }
+
+  function toggle() {
+    if (root.opened) root.controller.hide()
+    else root.open()
+  }
+
   readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
   readonly property string binDir: pluginDir + "/bin"
 
@@ -793,6 +812,16 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
+
+    // Full-screen input region normally; just the card while the picker is up,
+    // so clicks elsewhere (the picker window) reach the windows underneath.
+    mask: Region {
+      x: root.picking ? panel.cardOrigin.x : 0
+      y: root.picking ? panel.cardOrigin.y : 0
+      width: root.picking ? panel.contentWidth : panel.screenW
+      height: root.picking ? panel.contentHeight : panel.screenH
+    }
+
     contentWidth: panel.fittedContentWidth(Style.space(360))
     contentHeight: panel.fittedContentHeight(Math.min(column.implicitHeight, Style.space(520)))
 
