@@ -12,9 +12,17 @@ omarchy plugin add https://github.com/HcDuller/omarchy-vpn.git --enable
 
 ## Requirements
 
+- **[flea](https://github.com/thisisgm/flea)** provides the file picker for
+  "Import .ovpn File…" and the certificate "Browse…" buttons. It is a required
+  dependency: if it is missing, the plugin opens a terminal running
+  `omarchy pkg aur add flea-bin` (so you can type your sudo password) and keeps
+  file picking disabled until the install finishes. Only flea's picker backend
+  is enabled (`flea --picker`); your default file manager is never changed. To
+  undo it later: `flea --picker off`.
+
 - `networkmanager-openvpn` (NetworkManager's OpenVPN plugin) and `openvpn`
   itself — both already provide the `nmcli` integration this plugin drives.
-- `python3` with `gi`/GTK 3 bindings (`python-gobject`, already pulled in by
+- `/usr/bin/python3` with `gi`/GTK 3 bindings (`python-gobject`, already pulled in by
   `xdg-desktop-portal-gtk` on most Omarchy installs) for the native
   "Import .ovpn File…" file picker.
 
@@ -77,7 +85,8 @@ bindings of its own:
   go through `nmcli connection edit`'s interactive stdin, never argv/`ps`).
 - `omarchy-vpn-connect` / `omarchy-vpn-disconnect` / `omarchy-vpn-delete` —
   thin `nmcli connection up/down/delete` wrappers.
-- `omarchy-vpn-pick-file` — GTK `FileChooserNative` file picker.
+- `omarchy-vpn-pick-file` — `FileChooserNative` forced through xdg-desktop-portal (`GTK_USE_PORTAL=1`), which is how flea's picker is shown.
+- `omarchy-vpn-picker` — checks/installs flea and makes it the portal FileChooser.
 - `omarchy-vpn-import` — runs the picker, then `nmcli connection import`.
 
 ## Known limitations

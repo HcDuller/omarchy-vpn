@@ -153,7 +153,35 @@ Panel {
     saveProc.running = true
   }
 
+  // ---- flea file picker dependency ---------------------------------------
+  // flea provides the portal FileChooser backend the picker scripts go through.
+  // It is a hard dependency: when absent it is installed (in a terminal, so the
+  // sudo password can be typed), and file picking stays disabled until ready.
+  property string pickerState: "unknown"   // unknown | ready | portal-pending | installing | absent
+  property int pickerPolls: 0
+  readonly property bool pickerReady: pickerState === "ready"
+  readonly property string pickerHint: {
+    if (pickerState === "installing") return "Installing flea (file picker)… finish the install in the terminal that opened."
+    if (pickerState === "absent") return "flea (file picker) is required and not installed."
+    if (pickerState === "portal-pending") return "Setting up flea…"
+    return ""
+  }
+
+  function checkPicker() {
+    if (pickerCheckProc.running) return
+    pickerCheckProc.command = [root.binDir + "/omarchy-vpn-picker", "status"]
+    pickerCheckProc.running = true
+  }
+
+  function installPicker() {
+    // Only the instance that wins the claim opens the installer terminal; the
+    // other monitor's instance just polls.
+    pickerClaimProc.command = [root.binDir + "/omarchy-vpn-picker", "mark-installing"]
+    pickerClaimProc.running = true
+  }
+
   function runImport() {
+    if (!pickerReady) { installPicker(); return }
     importBusy = true
     formError = ""
     importProc.command = [root.binDir + "/omarchy-vpn-import"]
@@ -161,6 +189,7 @@ Panel {
   }
 
   function browseForField(field) {
+    if (!pickerReady) { installPicker(); return }
     browseTarget = field
     pickProc.command = [root.binDir + "/omarchy-vpn-pick-file"]
     pickProc.running = true
@@ -488,6 +517,71 @@ Panel {
     repeat: false
     onTriggered: root.justSaved = false
   }
+
+  Process {
+    id: pickerCheckProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var state = (text || "").trim() || "absent"
+        if (state === "portal-pending") {
+          pickerUseProc.command = [root.binDir + "/omarchy-vpn-picker", "use"]
+          pickerUseProc.running = true
+        }
+        root.pickerState = state
+        if (state === "absent" && root.pickerPolls === 0) root.installPicker()
+      }
+    }
+  }
+
+  Process {
+    id: pickerUseProc
+    stdout: StdioCollector { id: pickerUseOut; waitForEnd: true }
+    stderr: StdioCollector { id: pickerUseErr; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.pickerState = "ready"
+      else root.formError = (pickerUseErr.text || "Could not set up flea").trim()
+    }
+  }
+
+  Process {
+    id: pickerClaimProc
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        Quickshell.execDetached(["omarchy", "launch", "terminal", "omarchy", "pkg", "aur", "add", "flea-bin"])
+      }
+      // Claimed or not, someone is installing: watch for it to finish. The
+      // poll is bounded so a closed terminal can't leave us waiting forever.
+      root.pickerState = "installing"
+      root.pickerPolls = 1
+      pickerPollTimer.restart()
+    }
+  }
+
+  Timer {
+    id: pickerPollTimer
+    interval: 3000
+    repeat: true
+    onTriggered: {
+      root.pickerPolls += 1
+      if (root.pickerPolls > 60) {
+        pickerPollTimer.stop()
+        root.pickerPolls = 0
+        root.pickerState = "absent"
+        return
+      }
+      root.checkPicker()
+    }
+  }
+
+  Connections {
+    target: root
+    function onPickerStateChanged() {
+      if (root.pickerState === "ready" || root.pickerState === "portal-pending") pickerPollTimer.stop()
+    }
+  }
+
+  Component.onCompleted: checkPicker()
 
   Process {
     id: importProc
@@ -864,11 +958,21 @@ Panel {
               leftAlign: true
               bordered: true
               iconText: "󰈔"
-              text: root.importBusy ? "Waiting for file…" : "Import .ovpn File…"
+              text: root.importBusy ? "Waiting for file…" : (root.pickerReady ? "Import .ovpn File…" : "Import .ovpn File… (needs flea)")
               enabled: !root.importBusy
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               onClicked: root.runImport()
+            }
+
+            Text {
+              visible: root.pickerHint !== ""
+              width: parent.width
+              text: root.pickerHint + (root.pickerState === "absent" ? " Click Import to install it." : "")
+              wrapMode: Text.WordWrap
+              color: Qt.darker(root.bar.foreground, 1.3)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
             }
 
             PanelSeparator { foreground: root.bar.foreground }

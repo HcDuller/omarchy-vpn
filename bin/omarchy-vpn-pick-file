@@ -1,16 +1,23 @@
 #!/usr/bin/python3
 """Native file picker for importing a .ovpn configuration.
 
-Uses GTK's FileChooserNative (routed through xdg-desktop-portal when the
-app is sandboxed, or a plain GTK dialog otherwise) so the shell never has
-to implement its own in-QML file browser -- the same "shell out to a
+Uses GTK's FileChooserNative, forced through xdg-desktop-portal so the dialog
+is flea's picker, so the shell never has to implement its own in-QML file browser -- the same "shell out to a
 helper that owns the native picker" pattern the built-in Tailscale plugin
 uses for its send-file action.
 
 Prints the chosen path to stdout and exits 0, or exits 1 with nothing on
 stdout if the user canceled.
 """
+import os
 import sys
+
+# Gtk.FileChooserNative only talks to xdg-desktop-portal when sandboxed or when
+# told to. Forcing it routes the dialog to whichever portal FileChooser backend
+# is configured -- flea, which this plugin depends on -- instead of GTK's own
+# built-in dialog. Must be set before GTK initialises.
+os.environ["GTK_USE_PORTAL"] = "1"
+
 import gi
 
 gi.require_version("Gtk", "3.0")
