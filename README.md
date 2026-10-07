@@ -1,8 +1,42 @@
 # VPN
 
-An Omarchy Quattro shell plugin to manage OpenVPN connections from the bar:
-connect/disconnect existing profiles, create new ones by hand, or import an
-existing `.ovpn` file.
+An [Omarchy](https://omarchy.org) Quattro shell plugin that manages OpenVPN
+connections from the bar. It drives NetworkManager (`nmcli`), so every profile
+you create here also shows up in `nmcli`, `nm-connection-editor` and the rest of
+the system.
+
+- **Status at a glance:** a shield icon in the bar with a color-coded badge:
+  gray (idle), yellow (connecting), green (connected), red (error). The tooltip
+  reads "VPN".
+- **Connection list:** every OpenVPN profile with its state, plus one-click
+  connect/disconnect, edit and delete.
+- **Create or edit profiles:** servers, port, protocol, authentication mode,
+  certificates, credentials and advanced OpenVPN options, all in a form.
+- **Multiple servers:** add as many `remote` server addresses as the profile
+  needs, one row each.
+- **Import `.ovpn` files:** pick a file with the flea file picker, review what
+  was parsed, and save.
+- **Credentials at connect time:** an inline prompt asks for username and
+  password when none is saved, with an optional **Save password** toggle. A
+  wrong password fails once and never loops.
+- **Notifications:** desktop notifications when a connection is established
+  and when it drops unexpectedly. Disconnecting yourself stays quiet.
+- **Always up to date:** the badge and list follow NetworkManager, including
+  changes made outside the plugin, even with the panel closed.
+
+## Screenshots
+
+| Connection list | Connect prompt |
+|---|---|
+| ![Connection list](docs/images/connections.png) | ![Connect prompt](docs/images/connect-prompt.png) |
+
+| Editing a connection | Advanced options |
+|---|---|
+| ![Editing a connection](docs/images/edit.png) | ![Advanced options](docs/images/edit-advanced.png) |
+
+Importing a `.ovpn` file opens flea's picker next to the panel:
+
+![Importing a .ovpn file](docs/images/import.png)
 
 ## Install
 
@@ -26,25 +60,27 @@ omarchy plugin add https://github.com/HcDuller/omarchy-vpn.git --enable
   `xdg-desktop-portal-gtk` on most Omarchy installs) for the native
   "Import .ovpn File…" file picker.
 
-## What it does
+## Using it
 
-- Bar icon: a lock/shield glyph with a small colored status badge —
-  gray (idle), yellow (connecting), green (connected), red (error).
-  Hover shows "VPN"; click opens the panel.
-- Panel: lists every OpenVPN connection profile NetworkManager knows about.
-  Each row shows a provider-name square (first two letters of the connection
-  name, colored by its own state), the connection name/status, and
-  connect/disconnect, edit, and delete icon buttons.
-- "New Connection" opens a form to either:
-  - fill in the fields by hand — server address(es) (OpenVPN allows more than
-    one `remote`, so the form lets you add/remove as many as you need), port,
-    protocol, auth mode, certificates, username/password, plus a collapsible
-    "Advanced" section for cipher/digest/TLS-auth/compression/custom
-    `vpn.data` fields, or
-  - "Import .ovpn File…", which opens a native file picker, imports the file
-    via `nmcli connection import type openvpn`, then reopens the same form
-    pre-filled with everything NetworkManager parsed out of it, so it can be
-    reviewed or edited before saving.
+- **Connect / disconnect:** the play/disconnect icon on a row, or click the row.
+  Rows show a two-letter square colored by state, and the name with its status.
+- **New connection:** the **New Connection** button opens the form. Fill it in
+  by hand, or use **Import .ovpn File…** to start from an existing config.
+- **Edit:** the pencil icon opens the same form pre-filled from the profile.
+  Leave the password blank to keep the stored one. **Save** shows a brief
+  "Saved" and stays on the form; **Cancel** or Escape returns to the list.
+- **Delete:** the trash icon, with a confirmation.
+- **Server addresses:** the form has one row per server (address, port, UDP or
+  TCP). Use **Add server address** and the remove icon to manage them. Imported
+  configs with several `remote` lines show one row each.
+- **Authentication modes:** certificates only, username and password, or both.
+  Certificate, key and TLS key fields have a **Browse** button (flea's picker).
+- **Advanced:** cipher, auth digest, device type (TUN/TAP), TLS auth/crypt key
+  and direction, compression, and free-form custom `vpn.data` fields. Anything
+  in an existing profile that the form has no control for is kept under
+  **Custom fields**, never dropped.
+- **Refresh:** the plugin polls NetworkManager every 5 seconds by default
+  (`refreshIntervalSec`, 2 to 60).
 
 ## Authentication at connect
 
@@ -87,14 +123,17 @@ bindings of its own:
   thin `nmcli connection up/down/delete` wrappers.
 - `omarchy-vpn-pick-file` — `FileChooserNative` forced through xdg-desktop-portal (`GTK_USE_PORTAL=1`), which is how flea's picker is shown.
 - `omarchy-vpn-picker` — checks/installs flea and makes it the portal FileChooser.
+- `omarchy-vpn-notify` — de-duplicated desktop notifications (the plugin runs once per monitor).
+- `omarchy-vpn-set-username` / `omarchy-vpn-store-secret` — update a profile's username or saved password without rewriting the rest of it.
 - `omarchy-vpn-import` — runs the picker, then `nmcli connection import`.
 
 ## Known limitations
 
-- The manual form does not attempt to reproduce every OpenVPN client
-  directive — anything read from an existing profile that the form doesn't
-  have a dedicated control for is preserved in the "Custom fields" list under
-  Advanced rather than dropped.
+- OpenVPN only. WireGuard and other VPN types are not managed here.
+- The form covers the common OpenVPN options; anything else is preserved as
+  custom fields rather than given a dedicated control.
+- Desktop notifications use the `network-vpn-symbolic` icon through
+  `notify-send`.
 
 ## License
 
