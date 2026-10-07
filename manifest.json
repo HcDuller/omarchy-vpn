@@ -16,7 +16,9 @@
     "displayName": "VPN",
     "description": "Connect, create, edit and import OpenVPN profiles from the bar.",
     "category": "Network",
+    "aliases": ["openvpn", "openvpn-manager"],
     "allowMultiple": false,
+    "defaultSection": "right",
     "defaults": {
       "refreshIntervalSec": 5
     },
