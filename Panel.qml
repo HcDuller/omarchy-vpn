@@ -287,11 +287,12 @@ Panel {
     if (pickerState === "installing") return
     if (pickerState === "ready" || pickerState === "declined") {
       pickingCanceled = false
-      importBusy = true
       formError = ""
-      importProc.pickerMode = pickMode()
       importProc.command = [root.binDir + "/omarchy-vpn-import", pickMode()]
       importProc.running = true
+      // Only after the process really started, so a failure above can never
+      // leave the button stuck on "Waiting for file…".
+      importBusy = importProc.running
       return
     }
     pendingPick = "import"
@@ -756,6 +757,9 @@ Panel {
       root.importBusy = false
       if (root.pickingCanceled) { root.pickingCanceled = pickProc.running; return }
       if (exitCode !== 0) {
+        // Cancelled, timed out or failed: make sure no picker window is left
+        // behind once the helper is gone.
+        root.closePicker()
         var err = (importStderr.text || "").trim()
         if (err !== "") root.formError = err
         return
@@ -776,6 +780,7 @@ Panel {
         var path = (pickStdout.text || "").trim()
         if (path !== "") root.setFormField(root.browseTarget, path)
       }
+      if (exitCode !== 0) root.closePicker()
       root.browseTarget = ""
     }
   }

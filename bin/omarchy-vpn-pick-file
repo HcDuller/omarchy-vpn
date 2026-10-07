@@ -51,7 +51,10 @@ def pick_flea():
         if unpacked[0] == 0 and len(unpacked) > 1:
             uris = unpacked[1].get("uris", [])
             if uris:
-                state["path"] = uris[0]
+                # The portal returns file:// URIs; callers want a plain path.
+                from urllib.parse import unquote, urlparse
+                parsed = urlparse(uris[0])
+                state["path"] = unquote(parsed.path) if parsed.scheme == "file" else uris[0]
         loop.quit()
 
     conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -89,6 +92,12 @@ def pick_flea():
 
 
 def pick_system():
+    # GTK prints harmless CRITICAL/WARNING lines on stderr (e.g. when the
+    # dialog is dismissed); the panel shows stderr as an error message, so
+    # keep a plain cancel silent.
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 2)
+
     import gi
     gi.require_version("Gtk", "3.0")
     from gi.repository import Gtk
