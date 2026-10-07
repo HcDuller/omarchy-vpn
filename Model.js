@@ -17,7 +17,8 @@ function parseStatusList(raw) {
       uuid: parts[0] || "",
       name: parts[1] || "",
       state: parts[2] || "idle",
-      autoconnect: (parts[3] || "") === "yes"
+      autoconnect: (parts[3] || "") === "yes",
+      intentionalDisconnect: (parts[4] || "") === "yes"
     })
   }
   return rows
@@ -210,7 +211,15 @@ function buildVpnDataFields(form) {
   if (usesCert && f.cert) data["cert"] = f.cert
   if (usesCert && f.key) data["key"] = f.key
   if (usesPassword && f.username) data["username"] = f.username
-  data["password-flags"] = usesPassword ? "1" : "0"
+  // Flags must match reality: "1" (stored in profile) with no stored secret
+  // sends NetworkManager to a desktop secret agent on connect -- the source of
+  // an endless wrong-password prompt loop. So "1" only when a password is being
+  // saved now (or already is); otherwise "2" (ask at connect, which this
+  // plugin does itself through its own prompt).
+  if (!usesPassword) data["password-flags"] = "0"
+  else if (f.password) data["password-flags"] = "1"
+  else if (f.passwordFlags !== undefined && f.passwordFlags !== "") data["password-flags"] = String(f.passwordFlags)
+  else data["password-flags"] = "2"
 
   if (f.cipher) data["data-ciphers"] = f.cipher
   if (f.authDigest && f.authDigest !== "none") data["auth"] = f.authDigest
@@ -242,7 +251,7 @@ function escapedDataMap(data) {
 // the connection name/autoconnect flag from omarchy-vpn-read -> form object
 // for the edit dialog. Password is intentionally left blank -- nmcli never
 // exposes vpn.secrets, so the user must re-enter it to change it.
-function formFromVpnData(name, data, autoconnect) {
+function formFromVpnData(name, data, autoconnect, secretsStored) {
   var form = emptyForm()
   var d = data || {}
   form.name = name || ""
@@ -257,6 +266,9 @@ function formFromVpnData(name, data, autoconnect) {
   form.cert = d.cert || ""
   form.key = d.key || ""
   form.username = d.username || ""
+  var flags = d["password-flags"]
+  if (flags === "1" && secretsStored === false) flags = "2"
+  form.passwordFlags = flags !== undefined ? flags : ""
   form.cipher = (d["data-ciphers"] || "").split(":")[0] || ""
   form.authDigest = d.auth || ""
   form.tlsAuthFile = d.ta || ""
@@ -306,9 +318,14 @@ function statusBadgeColor(state, muted) {
   return muted
 }
 
-function aggregateState(rows, pendingErrorUuid) {
+// Priority: error (something needs attention) > connecting > connected > idle.
+// `rows` already carries "error" for any connection with a pending error
+// overlay (failed connect, or an unexpected drop -- see Panel.qml's
+// updateConnections), so scanning rows alone is sufficient; no separate
+// out-of-band error flag is needed here.
+function aggregateState(rows) {
   var list = Array.isArray(rows) ? rows : []
-  if (pendingErrorUuid) return "error"
+  for (var e = 0; e < list.length; e++) if (list[e].state === "error") return "error"
   for (var i = 0; i < list.length; i++) if (list[i].state === "connecting") return "connecting"
   for (var j = 0; j < list.length; j++) if (list[j].state === "connected") return "connected"
   return "idle"

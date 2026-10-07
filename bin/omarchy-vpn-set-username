@@ -1,0 +1,9 @@
+#!/bin/bash
+# Updates only the username inside a profile's vpn.data, leaving every other
+# key untouched (no full map rebuild).
+set -uo pipefail
+
+uuid="${1:?usage: omarchy-vpn-set-username <uuid> <username>}"
+user="${2:?}"
+
+exec nmcli connection modify "$uuid" +vpn.data "username = $user"

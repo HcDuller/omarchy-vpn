@@ -1,0 +1,66 @@
+#!/bin/bash
+# Sends a VPN-related desktop notification, deduplicated across bar
+# instances. Omarchy runs one independent copy of this plugin's polling
+# logic per monitor (each monitor's bar hosts its own bar-widget instance),
+# so without this, the same real-world event (e.g. an unexpected disconnect
+# detected on the next poll tick) would fire one native notification per
+# monitor rather than once.
+#
+# A short-lived per-event marker file, guarded by flock so concurrent
+# instances can't race past the check, ensures only the first caller wins.
+set -uo pipefail
+
+kind="${1:?usage: omarchy-vpn-notify <kind> <key> [summary] [body]}"
+key="${2:?}"
+
+state_dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-vpn"
+mkdir -p "$state_dir"
+marker="$state_dir/notified-${kind}-${key}"
+lock="$marker.lock"
+
+# Disconnect actions are initiated by one bar instance but observed by all
+# monitor instances. Leave a short-lived shared marker so their pollers know
+# that this state change was intentional.
+if [ "$kind" = "mark-disconnect" ]; then
+  marker="$state_dir/intentional-disconnect-${key}"
+  touch "$marker"
+  exit 0
+fi
+
+if [ "$kind" = "check-disconnect" ]; then
+  marker="$state_dir/intentional-disconnect-${key}"
+  lock="$marker.lock"
+  exec 9>"$lock"
+  if [ -f "$marker" ]; then
+    now=$(date +%s)
+    mtime=$(stat -c %Y "$marker" 2>/dev/null || echo 0)
+    if [ $(( now - mtime )) -lt 20 ]; then
+      rm -f "$marker"
+      printf 'yes\n'
+      exit 0
+    fi
+    rm -f "$marker"
+  fi
+  printf 'no\n'
+  exit 0
+fi
+
+summary="${3:?}"
+body="${4:-}"
+
+exec 9>"$lock"
+flock -n 9 || exit 0
+
+# Skip if a notification for this exact event fired in the last 20s --
+# comfortably longer than any timing skew between per-monitor poll ticks,
+# short enough that a genuinely new occurrence later still notifies.
+if [ -f "$marker" ]; then
+  now=$(date +%s)
+  mtime=$(stat -c %Y "$marker" 2>/dev/null || echo 0)
+  if [ $(( now - mtime )) -lt 20 ]; then
+    exit 0
+  fi
+fi
+
+touch "$marker"
+exec notify-send --urgency=critical --app-name=VPN --icon=network-vpn-symbolic "$summary" "$body"

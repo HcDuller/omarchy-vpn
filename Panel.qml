@@ -70,12 +70,12 @@ Panel {
         else if (pending.kind === "disconnecting") state = "idle"
         else if (pending.kind === "error") { state = "error"; message = pending.message }
       }
-      list.push({ uuid: c.uuid, name: c.name, state: state, autoconnect: c.autoconnect, message: message })
+      list.push({ uuid: c.uuid, name: c.name, state: state, autoconnect: c.autoconnect, intentionalDisconnect: c.intentionalDisconnect, message: message })
     }
     return list
   }
 
-  readonly property string aggregateState: Model.aggregateState(rows, "")
+  readonly property string aggregateState: Model.aggregateState(rows)
   readonly property color badgeIdleColor: root.bar ? Qt.darker(root.bar.foreground, 1.6) : Color.muted
   readonly property color badgeColor: Model.statusBadgeColor(aggregateState, badgeIdleColor)
 
@@ -224,14 +224,80 @@ Panel {
     else connectRow(uuid)
   }
 
+  // ---- connect-time authentication ----------------------------------------
+  // The prompt is owned by the plugin (not nm-applet's secret agent): secrets
+  // go to nmcli through a private passwd-file, so NetworkManager never asks an
+  // agent. A wrong password therefore fails once, shows inline, and stays
+  // entirely under the user's control -- no re-prompt loop.
+  property string authUuid: ""
+  property string authUser: ""
+  property string authPass: ""
+  property bool authSave: false
+  property bool authBusy: false
+  property string authError: ""
+
   function connectRow(uuid) {
+    // Decide whether a password must be asked for before touching nmcli.
+    authCheckProc.uuid = uuid
+    authCheckProc.command = [root.binDir + "/omarchy-vpn-read", uuid]
+    authCheckProc.running = true
+  }
+
+  // Store the password on an existing profile (secret + flags=1) without
+  // rebuilding the rest of vpn.data.
+  function saveAuthSecret(uuid, password) {
+    savePassProc.command = [root.binDir + "/omarchy-vpn-store-secret", uuid]
+    savePassProc.jsonInput = JSON.stringify({ password: password })
+    savePassProc.running = true
+  }
+
+  function cancelAuth() {
+    authUuid = ""
+    authPass = ""
+    authError = ""
+    authBusy = false
+  }
+
+  function submitAuth() {
+    if (authBusy || authUuid === "") return
+    if (authUser.trim() === "" || authPass === "") {
+      authError = "Username and password are required"
+      return
+    }
+    authBusy = true
+    authError = ""
+    var c = connectionAt(authUuid)
+    // Persist a changed username first (non-secret, plain modify), then connect.
+    if (authUser !== authOriginalUser) {
+      userProc.uuid = authUuid
+      userProc.command = [root.binDir + "/omarchy-vpn-set-username", authUuid, authUser]
+      userProc.running = true
+    } else {
+      runAuthConnect()
+    }
+  }
+
+  property string authOriginalUser: ""
+
+  function runAuthConnect() {
+    connectProc.uuid = authUuid
+    connectProc.fromPrompt = true
+    connectProc.secretJson = JSON.stringify({ password: authPass })
+    connectProc.command = [root.binDir + "/omarchy-vpn-connect", authUuid, "--stdin-secrets"]
+    connectProc.running = true
+  }
+
+  function startConnect(uuid) {
     setPending(uuid, "connecting")
     connectProc.uuid = uuid
+    connectProc.fromPrompt = false
+    connectProc.secretJson = ""
     connectProc.command = [root.binDir + "/omarchy-vpn-connect", uuid]
     connectProc.running = true
   }
 
   function disconnectRow(uuid) {
+    Quickshell.execDetached([root.binDir + "/omarchy-vpn-notify", "mark-disconnect", uuid])
     setPending(uuid, "disconnecting")
     disconnectProc.uuid = uuid
     disconnectProc.command = [root.binDir + "/omarchy-vpn-disconnect", uuid]
@@ -264,12 +330,37 @@ Panel {
   }
 
   function updateConnections(raw) {
+    var previous = root.connections
     var parsed = Model.parseStatusList(raw)
     connections = parsed
 
-    // Drop pending overlays once nmcli agrees with what we asked for.
     var next = cloneMap(pendingActions)
     var changed = false
+
+    // Detect connections that dropped from "connected" to something else
+    // without us having asked for it (no "disconnecting" overlay in flight)
+    // -- a server-side timeout, a killed process, a network change, etc.
+    // The badge needs to flag this as an error rather than silently going
+    // back to idle, and the user needs an OS-level heads up since they may
+    // not have the panel open to notice the bar badge at all.
+    for (var p = 0; p < previous.length; p++) {
+      var prevConn = previous[p]
+      if (prevConn.state !== "connected") continue
+
+      var pendingForPrev = next[prevConn.uuid]
+      if (pendingForPrev && pendingForPrev.kind === "disconnecting") continue
+
+      var current = connectionAt(prevConn.uuid)
+      var stillConnected = current && current.state === "connected"
+      if (stillConnected || prevConn.intentionalDisconnect) continue
+
+      next[prevConn.uuid] = { kind: "error", message: "Connection was interrupted" }
+      changed = true
+      pendingErrorTimeout.restart()
+      root.notifyUnexpectedDisconnect(prevConn.uuid, prevConn.name)
+    }
+
+    // Drop pending overlays once nmcli agrees with what we asked for.
     for (var uuid in next) {
       var c = connectionAt(uuid)
       var pending = next[uuid]
@@ -280,6 +371,39 @@ Panel {
     if (changed) pendingActions = next
   }
 
+  // A real OS-level notification (not just the bar badge/panel) for a VPN
+  // connection that dropped without the user asking for it -- e.g. the
+  // server closed the tunnel, a network change killed it, the process died.
+  // Uses network-vpn-symbolic rather than any nm-applet icon name: that one
+  // is confirmed to actually resolve in the current icon theme, unlike
+  // nm-applet's own "gnome-lockscreen" request for its equivalent toast.
+  //
+  // Routed through omarchy-vpn-notify (not notify-send directly) so that
+  // running one instance of this plugin per monitor -- which Omarchy does
+  // -- doesn't turn one real disconnect into one notification per monitor.
+  function notifyUnexpectedDisconnect(uuid, name) {
+    Quickshell.execDetached([
+      root.binDir + "/omarchy-vpn-notify",
+      "disconnect",
+      uuid,
+      "VPN Disconnected",
+      "Connection to \"" + (name || "VPN") + "\" was interrupted."
+    ])
+  }
+
+  function notifyConnectionEstablished(uuid) {
+    var name = "VPN"
+    var c = connectionAt(uuid)
+    if (c && c.name) name = c.name
+    Quickshell.execDetached([
+      root.binDir + "/omarchy-vpn-notify",
+      "connected",
+      uuid,
+      "VPN Connected",
+      "Connection to \"" + name + "\" was successfully established."
+    ])
+  }
+
   onOpenedChanged: {
     if (opened) {
       mode = "list"
@@ -288,9 +412,13 @@ Panel {
   }
 
   Timer {
+    // Always polling, not just while the panel is open: the bar badge (and
+    // the unexpected-disconnect notification below) both need to reflect
+    // reality even when nobody has the panel open to see it.
     interval: root.refreshIntervalSec * 1000
-    running: root.opened
+    running: true
     repeat: true
+    triggeredOnStart: true
     onTriggered: root.refresh()
   }
 
@@ -320,7 +448,7 @@ Panel {
           fields[lines[i].substring(0, idx)] = lines[i].substring(idx + 1)
         }
         var data = Model.parseVpnData(fields.data || "")
-        root.form = Model.formFromVpnData(fields.name || "", data, (fields.autoconnect || "") === "yes")
+        root.form = Model.formFromVpnData(fields.name || "", data, (fields.autoconnect || "") === "yes", (fields.secrets || "") === "stored")
         root.advancedOpen = false
         root.mode = "form"
       }
@@ -339,6 +467,12 @@ Panel {
       if (exitCode === 0) {
         var uuid = (saveStdout.text || "").trim()
         if (uuid !== "") root.editingUuid = uuid
+        if (root.form.password) {
+          // The secret is stored now; keep the form consistent so a later
+          // save with a blank password doesn't downgrade the flags.
+          root.setFormField("passwordFlags", "1")
+          root.setFormField("password", "")
+        }
         root.justSaved = true
         savedFlashTimer.restart()
         root.refresh()
@@ -386,12 +520,93 @@ Panel {
   }
 
   Process {
-    id: connectProc
+    id: authCheckProc
     property string uuid: ""
-    stderr: StdioCollector { id: connectStderr; waitForEnd: true }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var fields = {}
+        var lines = text.split("\n")
+        for (var i = 0; i < lines.length; i++) {
+          var idx = lines[i].indexOf("\t")
+          if (idx === -1) continue
+          fields[lines[i].substring(0, idx)] = lines[i].substring(idx + 1)
+        }
+        var data = Model.parseVpnData(fields.data || "")
+        var needsPassword = (data["connection-type"] || "password-tls") !== "tls"
+        var stored = (fields.secrets || "") === "stored"
+        var uuid = authCheckProc.uuid
+        if (needsPassword && !stored) {
+          var c = root.connectionAt(uuid)
+          root.authUuid = uuid
+          root.authUser = data.username || ""
+          root.authOriginalUser = data.username || ""
+          root.authPass = ""
+          root.authSave = !!(c && c.autoconnect)
+          root.authError = ""
+          root.authBusy = false
+        } else {
+          root.startConnect(uuid)
+        }
+      }
+    }
+  }
+
+  Process {
+    id: userProc
+    property string uuid: ""
+    stderr: StdioCollector { id: userStderr; waitForEnd: true }
     onExited: function(exitCode) {
       if (exitCode === 0) {
+        root.authOriginalUser = root.authUser
+        root.runAuthConnect()
+      } else {
+        root.authBusy = false
+        root.authError = (userStderr.text || "Could not update username").trim()
+      }
+    }
+  }
+
+  Process {
+    id: savePassProc
+    property string jsonInput: ""
+    stdinEnabled: true
+    onStarted: { write(jsonInput + "\n"); jsonInput = "" }
+    onExited: root.refresh()
+  }
+
+  Process {
+    id: connectProc
+    property string uuid: ""
+    property bool fromPrompt: false
+    property string secretJson: ""
+    stdinEnabled: true
+    stderr: StdioCollector { id: connectStderr; waitForEnd: true }
+    onStarted: {
+      if (secretJson !== "") { write(secretJson + "\n"); secretJson = "" }
+    }
+    onExited: function(exitCode) {
+      if (fromPrompt) {
+        root.authBusy = false
+        if (exitCode === 0) {
+          // Optionally keep the secret so future connects (and autoconnect)
+          // don't need to ask again.
+          if (root.authSave) root.saveAuthSecret(connectProc.uuid, root.authPass)
+          root.setPending(connectProc.uuid, null)
+          root.cancelAuth()
+          root.notifyConnectionEstablished(connectProc.uuid)
+        } else {
+          // Bounded retry: surface the error, keep the prompt open, wait for
+          // the user. Nothing here ever re-submits on its own.
+          root.authError = ((connectStderr.text || "Connection failed").trim().split("\n")[0])
+          root.setPending(connectProc.uuid, null)
+        }
+        root.refresh()
+        return
+      }
+      if (exitCode === 0) {
         root.setPending(connectProc.uuid, null)
+        root.notifyConnectionEstablished(connectProc.uuid)
       } else {
         var msg = (connectStderr.text || "Connection failed").trim()
         root.setPending(connectProc.uuid, "error", msg)
@@ -490,7 +705,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.mode === "form" || root.confirmDeleteUuid !== ""
+      blocked: root.mode === "form" || root.confirmDeleteUuid !== "" || root.authUuid !== ""
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -501,9 +716,10 @@ Panel {
       // the form to the list, without closing the whole panel.
       Shortcut {
         sequence: "Escape"
-        enabled: root.mode === "form" || root.confirmDeleteUuid !== ""
+        enabled: root.mode === "form" || root.confirmDeleteUuid !== "" || root.authUuid !== ""
         onActivated: {
-          if (root.confirmDeleteUuid !== "") root.cancelDelete()
+          if (root.authUuid !== "") root.cancelAuth()
+          else if (root.confirmDeleteUuid !== "") root.cancelDelete()
           else root.cancelForm()
         }
       }
@@ -607,10 +823,20 @@ Panel {
 
             Repeater {
               model: root.rows
-              delegate: ConnectionRow {
+              delegate: Column {
                 required property var modelData
                 width: parent.width
-                row: modelData
+                spacing: Style.space(6)
+
+                ConnectionRow {
+                  width: parent.width
+                  row: modelData
+                }
+
+                AuthPrompt {
+                  width: parent.width
+                  visible: root.authUuid === modelData.uuid
+                }
               }
             }
           }
@@ -1039,6 +1265,86 @@ Panel {
 
   // One VPN connection row: provider-name square + name/status + connect
   // and edit icon buttons. Modeled on Bluetooth's DeviceRow.
+  // Inline credentials prompt shown under a row whose profile has no stored
+  // password. Username is editable (prefilled from the profile).
+  component AuthPrompt: Column {
+    id: prompt
+    spacing: Style.space(8)
+    height: visible ? implicitHeight : 0
+
+    onVisibleChanged: if (visible) Qt.callLater(function() { passField.forceActiveFocus() })
+
+    Item { width: 1; height: Style.space(2) }
+
+    FormField {
+      label: "Username"
+      TextField {
+        width: parent.width
+        text: root.authUser
+        enabled: !root.authBusy
+        onTextEdited: root.authUser = text
+        onAccepted: passField.forceActiveFocus()
+      }
+    }
+
+    FormField {
+      label: "Password"
+      TextField {
+        id: passField
+        width: parent.width
+        password: true
+        text: root.authPass
+        enabled: !root.authBusy
+        onTextEdited: root.authPass = text
+        onAccepted: root.submitAuth()
+      }
+    }
+
+    Toggle {
+      width: parent.width
+      label: "Save password"
+      foreground: root.bar.foreground
+      fontFamily: root.bar.fontFamily
+      checked: root.authSave
+      onClicked: root.authSave = !root.authSave
+    }
+
+    Text {
+      visible: root.authError !== ""
+      width: parent.width
+      text: root.authError
+      wrapMode: Text.WordWrap
+      color: Color.urgent
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+
+    Row {
+      width: parent.width
+      spacing: Style.space(8)
+      layoutDirection: Qt.RightToLeft
+
+      Button {
+        bordered: true
+        text: root.authBusy ? "Connecting…" : "Connect"
+        enabled: !root.authBusy
+        foreground: root.bar.foreground
+        fontFamily: root.bar.fontFamily
+        onClicked: root.submitAuth()
+      }
+      Button {
+        bordered: true
+        text: "Cancel"
+        enabled: !root.authBusy
+        foreground: root.bar.foreground
+        fontFamily: root.bar.fontFamily
+        onClicked: root.cancelAuth()
+      }
+    }
+
+    PanelSeparator { foreground: root.bar.foreground }
+  }
+
   component ConnectionRow: CursorSurface {
     id: connRow
     required property var row

@@ -8,6 +8,7 @@
 #   name<TAB><connection name>
 #   data<TAB><raw vpn.data map string, "k = v, k = v, ...">
 #   autoconnect<TAB>yes|no
+#   secrets<TAB>stored|missing   (whether a password secret is saved; never its value)
 set -uo pipefail
 
 uuid="${1:?usage: omarchy-vpn-read <uuid>}"
@@ -19,3 +20,11 @@ autoconnect=$(nmcli -g connection.autoconnect connection show "$uuid" 2>/dev/nul
 printf 'name\t%s\n' "$name"
 printf 'data\t%s\n' "$data"
 printf 'autoconnect\t%s\n' "$autoconnect"
+
+# nmcli only reveals secrets with -s, and only to the profile's owner. Check
+# presence of the password key without ever echoing the value.
+if nmcli -s -g vpn.secrets connection show "$uuid" 2>/dev/null | grep -q '^password = .'; then
+  printf 'secrets\tstored\n'
+else
+  printf 'secrets\tmissing\n'
+fi

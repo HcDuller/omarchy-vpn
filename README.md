@@ -38,6 +38,20 @@ omarchy plugin add https://github.com/HcDuller/omarchy-vpn.git --enable
     pre-filled with everything NetworkManager parsed out of it, so it can be
     reviewed or edited before saving.
 
+## Authentication at connect
+
+If a profile uses a username/password and no password is stored, clicking
+Connect opens an inline prompt under the row with an editable username
+(prefilled from the profile), a password field, and a **Save password**
+toggle. Credentials go to `nmcli` through a private `0600` passwd-file, so
+NetworkManager never falls back to a desktop secret agent: a wrong password
+fails once, shows the error inline, and the prompt stays open until you retry
+or cancel (Escape / Cancel). Nothing retries on its own.
+
+With **Save password** off the password is used once and never stored. Profiles
+with autoconnect enabled should save the password, otherwise NetworkManager
+will ask a secret agent when it connects on its own.
+
 ## Configure
 
 ```sh

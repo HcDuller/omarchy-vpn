@@ -1,6 +1,6 @@
 #!/bin/bash
 # Lists OpenVPN connection profiles known to NetworkManager, one per line:
-#   uuid<TAB>name<TAB>state<TAB>autoconnect
+#   uuid<TAB>name<TAB>state<TAB>autoconnect<TAB>intentional-disconnect
 #
 # state is one of: connected | connecting | idle
 # (an in-flight connect/disconnect/error is tracked by the panel itself,
@@ -29,5 +29,17 @@ while IFS= read -r uuid; do
     *) st=idle ;;
   esac
 
-  printf '%s\t%s\t%s\t%s\n' "$uuid" "$name" "$st" "$autoconnect"
+  intentional="no"
+  marker="${XDG_RUNTIME_DIR:-/tmp}/omarchy-vpn/intentional-disconnect-${uuid}"
+  if [ -f "$marker" ]; then
+    now=$(date +%s)
+    mtime=$(stat -c %Y "$marker" 2>/dev/null || echo 0)
+    if [ $(( now - mtime )) -lt 20 ]; then
+      intentional="yes"
+    else
+      rm -f "$marker"
+    fi
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\n' "$uuid" "$name" "$st" "$autoconnect" "$intentional"
 done <<< "$uuids"

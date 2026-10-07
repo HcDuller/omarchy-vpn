@@ -2,7 +2,29 @@
 # Activates an OpenVPN connection profile by UUID. Meant to be run through a
 # foreground Process (not execDetached) so the caller can read the exit code
 # and stderr to distinguish success from a real failure.
+#
+# With --stdin-secrets, one JSON line {"password": "..."} is read from stdin
+# and handed to nmcli through a private 0600 passwd-file (never argv, which
+# is world-readable via /proc). Supplying secrets this way means NetworkManager
+# never falls back to a desktop secret agent (nm-applet), so a wrong password
+# fails once instead of re-prompting forever.
 set -uo pipefail
 
-uuid="${1:?usage: omarchy-vpn-connect <uuid>}"
-exec nmcli connection up "$uuid"
+uuid="${1:?usage: omarchy-vpn-connect <uuid> [--stdin-secrets]}"
+
+if [ "${2:-}" != "--stdin-secrets" ]; then
+  exec nmcli connection up "$uuid"
+fi
+
+IFS= read -r line
+password=$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("password",""), end="")')
+
+dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-vpn"
+mkdir -p "$dir"
+chmod 700 "$dir"
+file=$(mktemp "$dir/secrets.XXXXXX")
+trap 'rm -f "$file"' EXIT
+chmod 600 "$file"
+printf 'vpn.secrets.password:%s\n' "$password" > "$file"
+
+nmcli connection up "$uuid" passwd-file "$file"
