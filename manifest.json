@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.hcduller.vpn",
   "name": "VPN",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "author": "HcDuller",
   "license": "MIT",
   "description": "Manage OpenVPN connections from the bar: connect/disconnect with a color-coded status badge, create and edit profiles with multiple servers, import .ovpn files, and enter credentials at connect time.",

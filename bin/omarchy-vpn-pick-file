@@ -41,7 +41,10 @@ def pick_flea():
         try:
             unpacked = conn.call_finish(res).unpack()
         except GLib.Error as e:
-            print("pick failed: %s" % e, file=sys.stderr)
+            # flea-portal quits when left idle, dropping the pending call:
+            # that is a cancel, not an error worth showing.
+            if "Disconnected" not in str(e) and "NoReply" not in str(e) and "ServiceUnknown" not in str(e):
+                print("pick failed: %s" % e, file=sys.stderr)
             loop.quit()
             return
         state["code"] = unpacked[0]
@@ -72,13 +75,16 @@ def pick_flea():
               Gio.DBusCallFlags.NONE, 300000, None, on_reply, None)
 
     loop = GLib.MainLoop()
-    GLib.timeout_add_seconds(600, loop.quit)
+    GLib.timeout_add_seconds(90, loop.quit)
     loop.run()
 
     if state["path"]:
         print(state["path"])
         return 0
-    sys.stderr.write("no selection (code=%s)\n" % state["code"])
+    # A cancel (response 1) or timeout is silent; only genuine backend
+    # failures (response 2 / unexpected) write to stderr.
+    if state["code"] not in (None, 1):
+        sys.stderr.write("file picker failed (code=%s)\n" % state["code"])
     return 1
 
 

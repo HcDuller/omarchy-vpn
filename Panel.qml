@@ -34,6 +34,7 @@ Panel {
   // and closes (taking the picker with it) once focus moves to anything else.
   readonly property bool picking: importProc.running || pickProc.running
   readonly property string pickerAppId: "com.thisisgm.flea.picker"
+  readonly property string systemPickerAppId: "omarchy-vpn-pick-file"
   readonly property var activeTop: ToplevelManager.activeToplevel
   readonly property string activeAppId: activeTop ? (activeTop.appId || "") : ""
   property bool pickerSeenFocused: false
@@ -77,8 +78,29 @@ Panel {
   function closePicker() {
     var list = ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
     for (var i = 0; i < list.length; i++) {
-      if (list[i] && list[i].appId === pickerAppId) list[i].close()
+      if (list[i] && (list[i].appId === pickerAppId || list[i].appId === systemPickerAppId)) list[i].close()
     }
+  }
+
+  // Abandons an in-flight pick (import or certificate Browse): closes the
+  // picker window, stops the helper processes and clears every "waiting"
+  // flag, so leaving the form (Escape, back, close) never strands the UI in
+  // "Waiting for file…". The guard makes the processes' own onExited handlers
+  // skip their completion logic for runs we cancelled on purpose.
+  property bool pickingCanceled: false
+
+  function cancelPicking() {
+    var active = importProc.running || pickProc.running
+    if (active) {
+      pickingCanceled = true
+      closePicker()
+      importProc.running = false
+      pickProc.running = false
+    }
+    importBusy = false
+    browseTarget = ""
+    pendingPick = ""
+    pickerAsk = false
   }
 
   // Dismissals (outside click, Escape, popout switch) are ignored while
@@ -86,11 +108,12 @@ Panel {
   // still closes it, as an escape hatch.
   function close() {
     if (root.picking) return
+    root.cancelPicking()
     root.controller.hide()
   }
 
   function toggle() {
-    if (root.opened) { closePicker(); root.controller.hide() }
+    if (root.opened) { root.cancelPicking(); root.controller.hide() }
     else root.open()
   }
 
@@ -182,6 +205,7 @@ Panel {
   }
 
   function openCreate() {
+    cancelPicking()
     form = Model.emptyForm()
     editingUuid = ""
     advancedOpen = false
@@ -191,6 +215,7 @@ Panel {
   }
 
   function openEdit(uuid) {
+    cancelPicking()
     formError = ""
     justSaved = false
     editingUuid = uuid
@@ -199,6 +224,7 @@ Panel {
   }
 
   function cancelForm() {
+    cancelPicking()
     mode = "list"
     formError = ""
     justSaved = false
@@ -260,6 +286,7 @@ Panel {
   function runImport() {
     if (pickerState === "installing") return
     if (pickerState === "ready" || pickerState === "declined") {
+      pickingCanceled = false
       importBusy = true
       formError = ""
       importProc.pickerMode = pickMode()
@@ -274,6 +301,7 @@ Panel {
   function browseForField(field) {
     if (pickerState === "installing") return
     if (pickerState === "ready" || pickerState === "declined") {
+      pickingCanceled = false
       browseTarget = field
       pickProc.command = [root.binDir + "/omarchy-vpn-pick-file", pickMode()]
       pickProc.running = true
@@ -294,6 +322,7 @@ Panel {
   }
 
   function openSettings() {
+    cancelPicking()
     if (mode !== "settings") modeBeforeSettings = mode
     mode = "settings"
   }
@@ -725,6 +754,7 @@ Panel {
     stderr: StdioCollector { id: importStderr; waitForEnd: true }
     onExited: function(exitCode) {
       root.importBusy = false
+      if (root.pickingCanceled) { root.pickingCanceled = pickProc.running; return }
       if (exitCode !== 0) {
         var err = (importStderr.text || "").trim()
         if (err !== "") root.formError = err
@@ -741,6 +771,7 @@ Panel {
     id: pickProc
     stdout: StdioCollector { id: pickStdout; waitForEnd: true }
     onExited: function(exitCode) {
+      if (root.pickingCanceled) { root.pickingCanceled = importProc.running; root.browseTarget = ""; return }
       if (exitCode === 0 && root.browseTarget !== "") {
         var path = (pickStdout.text || "").trim()
         if (path !== "") root.setFormField(root.browseTarget, path)
@@ -999,7 +1030,7 @@ Panel {
               anchors.right: parent.right
               anchors.rightMargin: Style.space(2)
               anchors.verticalCenter: parent.verticalCenter
-              iconText: root.mode === "settings" ? "" : "󰚙"
+              iconText: root.mode === "settings" ? "\uf060" : "\uf013"
               tooltipText: root.mode === "settings" ? "Back" : "Settings"
               foreground: root.bar.foreground
               hoverColor: root.bar.foreground

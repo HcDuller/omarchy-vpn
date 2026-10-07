@@ -147,7 +147,7 @@ bindings of its own:
   go through `nmcli connection edit`'s interactive stdin, never argv/`ps`).
 - `omarchy-vpn-connect` / `omarchy-vpn-disconnect` / `omarchy-vpn-delete` —
   thin `nmcli connection up/down/delete` wrappers.
-- `omarchy-vpn-pick-file` — file dialog with two backends: `flea` (flea's portal backend called directly over D-Bus, no global claim) and `system` (standard GTK dialog).
+- `omarchy-vpn-pick-file` — file dialog with two backends: `flea` (flea's portal backend called directly over D-Bus, no global claim; gives up after 90 s) and `system` (standard GTK dialog). Cancelling is silent. Leaving the form (Escape, back, close) abandons a pending pick and closes its dialog.
 - `omarchy-vpn-picker` — records the pick choice (`decline`) and coordinates the flea install prompt.
 - `omarchy-vpn-notify` — de-duplicated desktop notifications (the plugin runs once per monitor).
 - `omarchy-vpn-set-username` / `omarchy-vpn-store-secret` — update a profile's username or saved password without rewriting the rest of it.
