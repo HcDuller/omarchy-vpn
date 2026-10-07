@@ -8,6 +8,7 @@
 #
 #   status           one of: ready | declined | installing | absent
 #   decline          persist the "use the system file picker" choice
+#   choose-flea      remove the persisted choice (back to flea when present)
 #   mark-installing  atomically record that an install terminal was launched
 #
 # The choice marker lives in the user's state directory and survives reboots;
@@ -54,6 +55,9 @@ case "${1:-status}" in
   decline)
     printf 'declined\n' > "$choice"
     ;;
+  choose-flea)
+    rm -f "$choice"
+    ;;
   mark-installing)
     # Atomic claim so only one per-monitor plugin instance launches the
     # installer terminal: succeeds (exit 0) for the first caller, 1 for the rest.
@@ -63,7 +67,7 @@ case "${1:-status}" in
     touch "$installing"
     ;;
   *)
-    echo "usage: omarchy-vpn-picker status|decline|mark-installing" >&2
+    echo "usage: omarchy-vpn-picker status|decline|choose-flea|mark-installing" >&2
     exit 2
     ;;
 esac

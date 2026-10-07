@@ -160,7 +160,8 @@ Panel {
 
   // ---- panel mode: browsing the list vs. the create/edit form ------------
 
-  property string mode: "list"   // "list" | "form"
+  property string mode: "list"   // "list" | "form" | "settings"
+  property string modeBeforeSettings: "list"
   property string editingUuid: ""
   property var form: Model.emptyForm()
   property bool advancedOpen: false
@@ -289,6 +290,25 @@ Panel {
 
   function answerPickerSystem() {
     // Persist the choice, then run the pending pick with the system picker.
+    chooseSystemPicker()
+  }
+
+  function openSettings() {
+    if (mode !== "settings") modeBeforeSettings = mode
+    mode = "settings"
+  }
+
+  function closeSettings() {
+    mode = modeBeforeSettings || "list"
+  }
+
+  function chooseFleaPicker() {
+    // Remove any persisted "system" choice, then install flea when absent.
+    pickerChooseFleaProc.command = [root.binDir + "/omarchy-vpn-picker", "choose-flea"]
+    pickerChooseFleaProc.running = true
+  }
+
+  function chooseSystemPicker() {
     pickerDeclineProc.command = [root.binDir + "/omarchy-vpn-picker", "decline"]
     pickerDeclineProc.running = true
   }
@@ -653,6 +673,11 @@ Panel {
   }
 
   Process {
+    id: pickerChooseFleaProc
+    onExited: root.checkPicker()
+  }
+
+  Process {
     id: pickerClaimProc
     onExited: function(exitCode) {
       if (exitCode === 0) {
@@ -924,7 +949,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.mode === "form" || root.confirmDeleteUuid !== "" || root.authUuid !== ""
+      blocked: root.mode === "form" || root.mode === "settings" || root.confirmDeleteUuid !== "" || root.authUuid !== ""
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -935,10 +960,11 @@ Panel {
       // the form to the list, without closing the whole panel.
       Shortcut {
         sequence: "Escape"
-        enabled: root.mode === "form" || root.confirmDeleteUuid !== "" || root.authUuid !== ""
+        enabled: root.mode === "form" || root.mode === "settings" || root.confirmDeleteUuid !== "" || root.authUuid !== ""
         onActivated: {
           if (root.authUuid !== "") root.cancelAuth()
           else if (root.confirmDeleteUuid !== "") root.cancelDelete()
+          else if (root.mode === "settings") root.closeSettings()
           else root.cancelForm()
         }
       }
@@ -966,7 +992,20 @@ Panel {
           // ---------- Hero ----------
           Item {
             width: parent.width
-            implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight)
+            implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, settingsButton.implicitHeight)
+
+            PanelActionButton {
+              id: settingsButton
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(2)
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: root.mode === "settings" ? "" : "󰚙"
+              tooltipText: root.mode === "settings" ? "Back" : "Settings"
+              foreground: root.bar.foreground
+              hoverColor: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              onClicked: root.mode === "settings" ? root.closeSettings() : root.openSettings()
+            }
 
             Text {
               id: heroIcon
@@ -982,20 +1021,21 @@ Panel {
               id: heroLabels
               anchors.left: heroIcon.right
               anchors.leftMargin: Style.space(14)
-              anchors.right: parent.right
+              anchors.right: settingsButton.left
+              anchors.rightMargin: Style.space(10)
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(2)
 
               Text {
-                text: "VPN"
+                text: root.mode === "settings" ? "Settings" : "VPN"
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.title
                 font.bold: true
               }
               Text {
-                visible: root.heroStatusText !== ""
-                      text: root.heroStatusText.toUpperCase()
+                visible: root.mode !== "settings" && root.heroStatusText !== ""
+                text: root.heroStatusText.toUpperCase()
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -1057,6 +1097,74 @@ Panel {
                 }
               }
             }
+          }
+
+          // ---------- Settings view ----------
+          Column {
+            width: parent.width
+            visible: root.mode === "settings"
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              text: "FILE PICKER"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            Text {
+              width: parent.width
+              text: {
+                if (root.pickerState === "installing") return "Finish the install in the terminal that opened."
+                if (root.pickerState === "ready") return "Picking files with flea's picker."
+                if (root.pickerState === "declined") return "Using the system file picker."
+                return "Picking files with the system dialog. Install flea for a nicer picker."
+              }
+              wrapMode: Text.WordWrap
+              color: Qt.darker(root.bar.foreground, 1.3)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Button {
+                bordered: true
+                iconText: root.pickerState === "ready" ? "󰄬" : "󰐕"
+                text: root.pickerState === "ready" ? "Using flea" : "Use flea"
+                enabled: root.pickerState !== "installing"
+                foreground: root.bar.foreground
+                accent: Color.accent
+                fontFamily: root.bar.fontFamily
+                onClicked: root.chooseFleaPicker()
+              }
+              Button {
+                bordered: true
+                iconText: "󰉋"
+                text: root.pickerState === "declined" ? "Using system picker" : "Use system picker"
+                enabled: root.pickerState !== "installing"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                onClicked: root.chooseSystemPicker()
+              }
+            }
+          }
+
+          PanelSeparator {
+            visible: root.mode === "settings"
+            foreground: root.bar.foreground
+          }
+
+          // A settings escape hatch note: picks stay available in either mode.
+          Text {
+            visible: root.mode === "settings"
+            width: parent.width
+            text: "File picking works with either choice. flea is installed from the AUR when absent; your choice is remembered."
+            wrapMode: Text.WordWrap
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
           }
 
           // ---------- Form mode (create/edit/import) ----------

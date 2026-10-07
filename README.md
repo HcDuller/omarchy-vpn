@@ -19,6 +19,11 @@ the system.
 - **Credentials at connect time:** an inline prompt asks for username and
   password when none is saved, with an optional **Save password** toggle. A
   wrong password fails once and never loops.
+- **Settings:** a gear button in the panel's top-right corner opens a settings
+  view (back arrow or Escape returns). Today it has one entry, **file picker**:
+  choose flea or the system dialog, with the current pick mode shown. Choosing
+  flea when it is not installed starts the same install flow as the ask in the
+  New Connection panel.
 - **Notifications:** desktop notifications when a connection is established
   and when it drops unexpectedly. Disconnecting yourself stays quiet.
 - **Always up to date:** the badge and list follow NetworkManager, including
@@ -112,6 +117,22 @@ omarchy bar move io.github.hcduller.vpn --section right
 ```sh
 omarchy plugin remove io.github.hcduller.vpn
 ```
+
+## Settings
+
+The gear button (top-right, next to the panel title) opens the settings view.
+The single available entry is the **file picker**:
+
+- **Use flea** — picks files with flea. If flea is not installed this also
+  removes any saved "system" choice and starts the install flow (a terminal
+  opens running `omarchy pkg aur add flea-bin` for the sudo password; file
+  picking pauses until it finishes).
+- **Use system picker** — persists the choice to
+  `~/.local/state/omarchy-vpn/picker-choice` and uses the standard system
+  dialog.
+
+The status line in the view shows the current pick mode. Closing the panel
+returns to the connection list.
 
 ## Backend
 
