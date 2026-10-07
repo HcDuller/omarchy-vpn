@@ -17,7 +17,7 @@ if [ "${2:-}" != "--stdin-secrets" ]; then
 fi
 
 IFS= read -r line
-password=$(printf '%s' "$line" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("password",""), end="")')
+password=$(printf '%s' "$line" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("password",""), end="")')
 
 dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-vpn"
 mkdir -p "$dir"

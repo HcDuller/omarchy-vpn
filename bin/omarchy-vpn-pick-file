@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Native file picker for importing a .ovpn configuration.
 
 Uses GTK's FileChooserNative (routed through xdg-desktop-portal when the

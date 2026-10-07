@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Creates or updates an OpenVPN NetworkManager connection profile.
 
 Reads a single JSON object from stdin:
