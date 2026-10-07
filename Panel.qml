@@ -225,19 +225,19 @@ Panel {
     saveProc.running = true
   }
 
-  // ---- flea file picker dependency ---------------------------------------
-  // flea provides the portal FileChooser backend the picker scripts go through.
-  // It is a hard dependency: when absent it is installed (in a terminal, so the
-  // sudo password can be typed), and file picking stays disabled until ready.
-  property string pickerState: "unknown"   // unknown | ready | portal-pending | installing | absent
+  // ---- flea file picker (optional) ----------------------------------------
+  // flea's picker is used directly through its portal backend D-Bus service,
+  // so no global desktop claims are made either way. When flea is absent the
+  // panel asks once at the first pick attempt: install flea, or keep the
+  // system file picker (persisted choice).
+  property string pickerState: "unknown"   // unknown | ready | declined | installing | absent
   property int pickerPolls: 0
+  property bool pickerAsk: false
+  property string pendingPick: ""          // "import" | file-field name
   readonly property bool pickerReady: pickerState === "ready"
-  readonly property string pickerHint: {
-    if (pickerState === "installing") return "Installing flea (file picker)… finish the install in the terminal that opened."
-    if (pickerState === "absent") return "flea (file picker) is required and not installed."
-    if (pickerState === "portal-pending") return "Setting up flea…"
-    return ""
-  }
+  readonly property string pickerHint: pickerState === "installing"
+    ? "Installing flea (file picker)… finish the install in the terminal that opened."
+    : ""
 
   function checkPicker() {
     if (pickerCheckProc.running) return
@@ -252,19 +252,59 @@ Panel {
     pickerClaimProc.running = true
   }
 
+  function pickMode() {
+    return pickerState === "ready" ? "flea" : "system"
+  }
+
   function runImport() {
-    if (!pickerReady) { installPicker(); return }
-    importBusy = true
-    formError = ""
-    importProc.command = [root.binDir + "/omarchy-vpn-import"]
-    importProc.running = true
+    if (pickerState === "installing") return
+    if (pickerState === "ready" || pickerState === "declined") {
+      importBusy = true
+      formError = ""
+      importProc.pickerMode = pickMode()
+      importProc.command = [root.binDir + "/omarchy-vpn-import", pickMode()]
+      importProc.running = true
+      return
+    }
+    pendingPick = "import"
+    pickerAsk = true
   }
 
   function browseForField(field) {
-    if (!pickerReady) { installPicker(); return }
-    browseTarget = field
-    pickProc.command = [root.binDir + "/omarchy-vpn-pick-file"]
-    pickProc.running = true
+    if (pickerState === "installing") return
+    if (pickerState === "ready" || pickerState === "declined") {
+      browseTarget = field
+      pickProc.command = [root.binDir + "/omarchy-vpn-pick-file", pickMode()]
+      pickProc.running = true
+      return
+    }
+    pendingPick = field
+    pickerAsk = true
+  }
+
+  function answerPickerInstall() {
+    pickerAsk = false
+    installPicker()
+  }
+
+  function answerPickerSystem() {
+    // Persist the choice, then run the pending pick with the system picker.
+    pickerDeclineProc.command = [root.binDir + "/omarchy-vpn-picker", "decline"]
+    pickerDeclineProc.running = true
+  }
+
+  function answerPickerNotNow() {
+    pickerAsk = false
+    pendingPick = ""
+  }
+
+  function continuePendingPick() {
+    pickerAsk = false
+    var pick = pendingPick
+    pendingPick = ""
+    if (pick === "") return
+    if (pick === "import") runImport()
+    else browseForField(pick)
   }
 
   function addExtraField() {
@@ -596,23 +636,19 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var state = (text || "").trim() || "absent"
-        if (state === "portal-pending") {
-          pickerUseProc.command = [root.binDir + "/omarchy-vpn-picker", "use"]
-          pickerUseProc.running = true
-        }
-        root.pickerState = state
-        if (state === "absent" && root.pickerPolls === 0) root.installPicker()
+        // Only the ask can start an install: never auto-install at startup
+        // or after a failed poll.
+        if (root.pickerState !== "installing" || state !== "absent") root.pickerState = state
+        if (state === "ready" && root.pendingPick !== "") continuePendingPick()
       }
     }
   }
 
   Process {
-    id: pickerUseProc
-    stdout: StdioCollector { id: pickerUseOut; waitForEnd: true }
-    stderr: StdioCollector { id: pickerUseErr; waitForEnd: true }
-    onExited: function(exitCode) {
-      if (exitCode === 0) root.pickerState = "ready"
-      else root.formError = (pickerUseErr.text || "Could not set up flea").trim()
+    id: pickerDeclineProc
+    onExited: {
+      root.pickerState = "declined"
+      root.continuePendingPick()
     }
   }
 
@@ -637,9 +673,12 @@ Panel {
     onTriggered: {
       root.pickerPolls += 1
       if (root.pickerPolls > 60) {
+        // The terminal was closed without installing (or install failed).
         pickerPollTimer.stop()
         root.pickerPolls = 0
         root.pickerState = "absent"
+        root.pendingPick = ""
+        pickerAsk = true
         return
       }
       root.checkPicker()
@@ -649,7 +688,7 @@ Panel {
   Connections {
     target: root
     function onPickerStateChanged() {
-      if (root.pickerState === "ready" || root.pickerState === "portal-pending") pickerPollTimer.stop()
+      if (root.pickerState === "ready") pickerPollTimer.stop()
     }
   }
 
@@ -1043,7 +1082,7 @@ Panel {
               leftAlign: true
               bordered: true
               iconText: "󰈔"
-              text: root.importBusy ? "Waiting for file…" : (root.pickerReady ? "Import .ovpn File…" : "Import .ovpn File… (needs flea)")
+              text: root.importBusy ? "Waiting for file…" : "Import .ovpn File…"
               enabled: !root.importBusy
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
@@ -1053,11 +1092,61 @@ Panel {
             Text {
               visible: root.pickerHint !== ""
               width: parent.width
-              text: root.pickerHint + (root.pickerState === "absent" ? " Click Import to install it." : "")
+              text: root.pickerHint
               wrapMode: Text.WordWrap
               color: Qt.darker(root.bar.foreground, 1.3)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.bodySmall
+            }
+
+            // One-time "install flea?" ask, shown when a pick was attempted
+            // and flea is absent. It spans the picker entry points (Import
+            // and the certificate Browse buttons).
+            Column {
+              width: parent.width
+              visible: root.pickerAsk
+              height: visible ? implicitHeight : 0
+              spacing: Style.space(10)
+
+              Item { width: 1; height: Style.space(2) }
+
+              Text {
+                width: parent.width
+                text: "flea is not installed. It provides a nicer file picker. Install it, or keep using the system file picker?"
+                wrapMode: Text.WordWrap
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.space(8)
+
+                Button {
+                  bordered: true
+                  iconText: "󰐕"
+                  text: "Install flea"
+                  foreground: root.bar.foreground
+                  accent: Color.accent
+                  fontFamily: root.bar.fontFamily
+                  onClicked: root.answerPickerInstall()
+                }
+                Button {
+                  bordered: true
+                  iconText: "󰉋"
+                  text: "Use system picker"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  onClicked: root.answerPickerSystem()
+                }
+                Button {
+                  text: "Not now"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  onClicked: root.answerPickerNotNow()
+                }
+              }
             }
 
             PanelSeparator { foreground: root.bar.foreground }

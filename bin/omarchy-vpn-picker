@@ -1,30 +1,31 @@
 #!/bin/bash
-# Manages flea, the file picker this plugin depends on. flea provides the
-# xdg-desktop-portal FileChooser backend, and omarchy-vpn-pick-file's
-# Gtk.FileChooserNative goes through that portal, so with flea configured the
-# user sees flea's dialog. Only the picker backend is claimed -- the default
-# file manager is never touched (no `flea --default`).
+# Manages the flea file picker as an OPTIONAL dependency.
 #
-#   status  prints one of: ready | portal-pending | installing | absent
-#   use     makes flea the portal FileChooser (idempotent), prints "ready"
-#   mark-installing   records that an install terminal was launched
+# flea's picker dialog is invoked by omarchy-vpn-pick-file --flea, which calls
+# flea's portal backend D-Bus service directly. Nothing here ever touches
+# portals.conf or claims the FileChooser portal globally -- the plugin never
+# changes which file picker other applications use.
+#
+#   status           one of: ready | declined | installing | absent
+#   decline          persist the "use the system file picker" choice
+#   mark-installing  atomically record that an install terminal was launched
+#
+# The choice marker lives in the user's state directory and survives reboots;
+# deleting it makes the plugin ask again on the next pick attempt.
 #
 # FLEA_VPN_TEST_ABSENT=1 makes `status` behave as if flea were not installed
-# (test hook for exercising the install path on a machine that has flea).
+# (test hook for exercising the prompt/install path on a machine that has it).
 set -uo pipefail
 
-state_dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-vpn"
-mkdir -p "$state_dir"
-installing="$state_dir/flea-installing"
-conf="${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal/portals.conf"
+runtime_dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-vpn"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-vpn"
+installing="$runtime_dir/flea-installing"
+choice="$state_dir/picker-choice"
+mkdir -p "$runtime_dir" "$state_dir"
 
 has_flea() {
   [ "${FLEA_VPN_TEST_ABSENT:-}" = "1" ] && return 1
   command -v flea >/dev/null 2>&1
-}
-
-portal_configured() {
-  [ -f "$conf" ] && grep -Eq '^org\.freedesktop\.impl\.portal\.FileChooser=.*\bflea\b' "$conf"
 }
 
 # An install marker only counts for a few minutes: the terminal may have been
@@ -39,22 +40,19 @@ install_in_progress() {
 
 case "${1:-status}" in
   status)
-    if has_flea; then
+    if [ -f "$choice" ]; then
+      echo declined
+    elif has_flea; then
       rm -f "$installing"
-      if portal_configured; then echo ready; else echo portal-pending; fi
+      echo ready
     elif install_in_progress; then
       echo installing
     else
       echo absent
     fi
     ;;
-  use)
-    has_flea || { echo "flea is not installed" >&2; exit 1; }
-    if ! portal_configured; then
-      flea --picker >/dev/null 2>&1
-      systemctl --user restart xdg-desktop-portal >/dev/null 2>&1
-    fi
-    portal_configured && echo ready || { echo "could not configure flea as the portal file chooser" >&2; exit 1; }
+  decline)
+    printf 'declined\n' > "$choice"
     ;;
   mark-installing)
     # Atomic claim so only one per-monitor plugin instance launches the
@@ -65,7 +63,7 @@ case "${1:-status}" in
     touch "$installing"
     ;;
   *)
-    echo "usage: omarchy-vpn-picker status|use|mark-installing" >&2
+    echo "usage: omarchy-vpn-picker status|decline|mark-installing" >&2
     exit 2
     ;;
 esac

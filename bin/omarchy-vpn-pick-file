@@ -1,37 +1,94 @@
 #!/usr/bin/python3
-"""Native file picker for importing a .ovpn configuration.
+"""Picks a single file. Two backends, chosen by argv[1]:
 
-Uses GTK's FileChooserNative, forced through xdg-desktop-portal so the dialog
-is flea's picker, so the shell never has to implement its own in-QML file browser -- the same "shell out to a
-helper that owns the native picker" pattern the built-in Tailscale plugin
-uses for its send-file action.
+  flea     talks to flea's portal FileChooser backend (impl D-Bus interface)
+           directly -- flea's picker window opens, but no portals.conf claim is
+           made, so other applications keep the desktop's configured chooser.
+  system   in-process GTK FileChooserNative (the standard GTK file dialog),
+           independent of portal configuration entirely.
 
-Prints the chosen path to stdout and exits 0, or exits 1 with nothing on
-stdout if the user canceled.
+Prints the chosen path to stdout, exits 0 -- or exits 1 with nothing on stdout
+if the dialog was cancelled.
 """
 import os
 import sys
 
-# Gtk.FileChooserNative only talks to xdg-desktop-portal when sandboxed or when
-# told to. Forcing it routes the dialog to whichever portal FileChooser backend
-# is configured -- flea, which this plugin depends on -- instead of GTK's own
-# built-in dialog. Must be set before GTK initialises.
-os.environ["GTK_USE_PORTAL"] = "1"
+# System mode must not route through the portal: FileChooserNative uses
+# xdg-desktop-portal whenever it is told to (or when sandboxed). Unset it so a
+# declined flea yields the plain in-process GTK dialog, immune to whatever
+# claims exist in portals.conf on this machine.
+os.environ.pop("GTK_USE_PORTAL", None)
 
-import gi
+BUS_NAME = "org.freedesktop.impl.portal.desktop.flea"
+OBJ_PATH = "/org/freedesktop/portal/desktop"
+IFACE = "org.freedesktop.impl.portal.FileChooser"
+DIALOG_TITLE = "Choose a file"
 
-gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk  # noqa: E402
+FLEA_FILTERS = [("OpenVPN config (*.ovpn, *.conf)", [(0, "*.ovpn"), (0, "*.conf")])]
 
 
-def main():
+def pick_flea():
+    import gi
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio, GLib
+
+    state = {"code": None, "path": None, "finished": False}
+
+    def on_reply(_source, res, _ud):
+        if state["finished"]:
+            return
+        state["finished"] = True
+        try:
+            unpacked = conn.call_finish(res).unpack()
+        except GLib.Error as e:
+            print("pick failed: %s" % e, file=sys.stderr)
+            loop.quit()
+            return
+        state["code"] = unpacked[0]
+        if unpacked[0] == 0 and len(unpacked) > 1:
+            uris = unpacked[1].get("uris", [])
+            if uris:
+                state["path"] = uris[0]
+        loop.quit()
+
+    conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    token = "omarchyvpnpick%d" % int(GLib.get_monotonic_time() % 1000000)
+    req_path = "/org/freedesktop/portal/desktop/request/%s/%s" % (
+        conn.get_unique_name()[1:].replace(".", "_"), token)
+
+    opts = GLib.Variant("a{sv}", {
+        "handle_token": GLib.Variant("s", token),
+        "filters": GLib.Variant("a(sa(us))", FLEA_FILTERS),
+        "modal": GLib.Variant("b", True),
+    })
+    params = GLib.Variant.new_tuple(
+        GLib.Variant("o", req_path),
+        GLib.Variant("s", "omarchy-vpn"),
+        GLib.Variant("s", ""),
+        GLib.Variant("s", DIALOG_TITLE),
+        opts)
+
+    conn.call(BUS_NAME, OBJ_PATH, IFACE, "OpenFile", params, None,
+              Gio.DBusCallFlags.NONE, 300000, None, on_reply, None)
+
+    loop = GLib.MainLoop()
+    GLib.timeout_add_seconds(600, loop.quit)
+    loop.run()
+
+    if state["path"]:
+        print(state["path"])
+        return 0
+    sys.stderr.write("no selection (code=%s)\n" % state["code"])
+    return 1
+
+
+def pick_system():
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk
+
     dialog = Gtk.FileChooserNative.new(
-        "Import OpenVPN Configuration",
-        None,
-        Gtk.FileChooserAction.OPEN,
-        "_Open",
-        "_Cancel",
-    )
+        DIALOG_TITLE, None, Gtk.FileChooserAction.OPEN, "_Open", "_Cancel")
 
     ovpn_filter = Gtk.FileFilter()
     ovpn_filter.set_name("OpenVPN config (*.ovpn, *.conf)")
@@ -45,15 +102,15 @@ def main():
     dialog.add_filter(all_filter)
 
     response = dialog.run()
-    path = dialog.get_filename() if response == Gtk.ResponseType.ACCEPT else None
+    path = dialog.get_filename()
     dialog.destroy()
 
-    if not path:
+    if response != Gtk.ResponseType.ACCEPT or not path:
         return 1
-
-    sys.stdout.write(path)
+    print(path)
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    mode = sys.argv[1] if len(sys.argv) > 1 else "system"
+    sys.exit(pick_flea() if mode == "flea" else pick_system())
