@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Ui
 import qs.Commons
 import "Model.js" as Model
@@ -22,22 +23,74 @@ Panel {
   // folder name the plugin is installed/cloned under, so renaming the
   // plugin id (or a user manually renaming the folder) can't silently break
   // every helper-script call the way a hardcoded HOME+id path would.
-  // True while flea's file picker is up. The panel's overlay window spans the
-  // whole screen above normal windows and closes the panel on any outside
-  // click, so without this a click on the picker would land on the overlay and
-  // dismiss the panel. While picking: outside clicks no longer close it, and
-  // the overlay only accepts input over the panel card itself.
+  // ---- keeping the panel open while flea's picker is up -------------------
+  // The panel is a full-screen overlay that closes on any outside click and
+  // holds keyboard focus. With the picker up that breaks two ways: a click on
+  // the picker lands on the overlay and dismisses the panel, and the picker
+  // never gets keyboard focus. While picking we therefore: (1) let the overlay
+  // pass input through everywhere except the panel card, (2) release keyboard
+  // focus so the picker can take it, and (3) tie the panel's lifetime to focus:
+  // it stays as long as the focused window is the picker or the panel itself,
+  // and closes (taking the picker with it) once focus moves to anything else.
   readonly property bool picking: importProc.running || pickProc.running
+  readonly property string pickerAppId: "com.thisisgm.flea.picker"
+  readonly property var activeTop: ToplevelManager.activeToplevel
+  readonly property string activeAppId: activeTop ? (activeTop.appId || "") : ""
+  property bool pickerSeenFocused: false
+
+  onPickingChanged: pickerSeenFocused = false
+
+  onActiveAppIdChanged: {
+    if (!picking) return
+    // No toplevel focused means focus is on the panel (a layer surface, not a
+    // toplevel), which counts as "the plugin itself".
+    if (activeAppId === "") return
+    if (activeAppId === pickerAppId) { pickerSeenFocused = true; return }
+    // Right after launch the previously focused app is still active until the
+    // picker maps and takes focus; only treat a focus change as "went
+    // elsewhere" once the picker has actually had focus.
+    if (!pickerSeenFocused) return
+    // Focus also lands on another app when the picker itself closes (file
+    // chosen or cancelled). Re-check shortly: only dismiss if the picker is
+    // still around, i.e. the user really moved away from it.
+    focusDismissTimer.restart()
+  }
+
+  Timer {
+    id: focusDismissTimer
+    interval: 200
+    onTriggered: {
+      if (!root.picking) return
+      if (root.activeAppId === "" || root.activeAppId === root.pickerAppId) return
+      if (!root.pickerExists()) return
+      root.closePicker()
+      root.controller.hide()
+    }
+  }
+
+  function pickerExists() {
+    var list = ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].appId === pickerAppId) return true
+    return false
+  }
+
+  function closePicker() {
+    var list = ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].appId === pickerAppId) list[i].close()
+    }
+  }
 
   // Dismissals (outside click, Escape, popout switch) are ignored while
-  // picking. Toggling from the bar icon still closes it, as an escape hatch.
+  // picking; the focus rule above decides instead. Toggling from the bar icon
+  // still closes it, as an escape hatch.
   function close() {
     if (root.picking) return
     root.controller.hide()
   }
 
   function toggle() {
-    if (root.opened) root.controller.hide()
+    if (root.opened) { closePicker(); root.controller.hide() }
     else root.open()
   }
 
@@ -813,6 +866,10 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
 
+    // Release keyboard focus while the picker is up so it can take it.
+    WlrLayershell.keyboardFocus: root.picking ? WlrKeyboardFocus.None
+      : (panel.open ? (panel.focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive) : WlrKeyboardFocus.None)
+
     // Full-screen input region normally; just the card while the picker is up,
     // so clicks elsewhere (the picker window) reach the windows underneath.
     mask: Region {
@@ -899,8 +956,7 @@ Panel {
               }
               Text {
                 visible: root.heroStatusText !== ""
-                height: visible ? implicitHeight : 0
-                text: root.heroStatusText.toUpperCase()
+                      text: root.heroStatusText.toUpperCase()
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -1565,7 +1621,6 @@ Panel {
               : connRow.isError ? (connRow.row.message || "Connection failed")
               : ""
           visible: statusText !== ""
-          height: visible ? implicitHeight : 0
           text: statusText
           color: connRow.rowStateColor
           font.family: root.bar.fontFamily
