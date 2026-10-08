@@ -31,17 +31,15 @@ the system.
 
 ## Screenshots
 
-| Connection list | Connect prompt |
-|---|---|
-| ![Connection list](docs/images/connections.png) | ![Connect prompt](docs/images/connect-prompt.png) |
+| Bar icon (idle) | Connecting | Connected |
+|---|---|---|
+| ![Bar icon, idle](docs/images/panel-idle.png) | ![Connecting](docs/images/panel-connecting.png) | ![Connected](docs/images/panel-connected.png) |
 
-| Editing a connection | Advanced options |
-|---|---|
-| ![Editing a connection](docs/images/edit.png) | ![Advanced options](docs/images/edit-advanced.png) |
+| Profile editor | Importing a `.ovpn` file | Settings |
+|---|---|---|
+| ![Profile editor](docs/images/profile-editor.png) | ![Importing a .ovpn file](docs/images/import-file.png) | ![Settings — file picker](docs/images/file-picker-settings.png) |
 
-Importing a `.ovpn` file opens the picker next to the panel (flea's when installed, shown here):
-
-![Importing a .ovpn file](docs/images/import.png)
+Importing opens the file picker next to the panel — flea's when installed, otherwise the system dialog; the form shows what was parsed before saving.
 
 ## Install
 
